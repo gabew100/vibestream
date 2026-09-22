@@ -9,6 +9,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $exe = Join-Path $root 'Sunshine\Sunshine\sunshine.exe'
 $running = Get-Process sunshine -ErrorAction SilentlyContinue | Where-Object SessionId -eq $mySid
 if (-not $running -and (Test-Path $exe)) {
-    Start-Process $exe -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden
+    Start-Process $exe -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden -Verb RunAs
     Add-Content (Join-Path $root 'autostart.log') "$(Get-Date -Format o) started sunshine in session $mySid (console=$consoleSid)"
 }
+
