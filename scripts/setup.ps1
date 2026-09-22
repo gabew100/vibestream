@@ -29,6 +29,10 @@ Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name 
 Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations' -Name DWMFRAMEINTERVAL -Value 8 -Type DWord
 Write-Host 'RDP composition rate raised'
 
+# 4b. Keep rendering the session while the viewer window is minimized (prevents black stream)
+New-Item -Path 'HKCU:\Software\Microsoft\Terminal Server Client' -Force | Out-Null
+Set-ItemProperty 'HKCU:\Software\Microsoft\Terminal Server Client' -Name RemoteDesktop_SuppressWhenMinimized -Value 2 -Type DWord
+
 # 5. Download portable Sunshine if missing
 $sunshineExe = "$root\Sunshine\Sunshine\sunshine.exe"
 if (-not (Test-Path $sunshineExe)) {
