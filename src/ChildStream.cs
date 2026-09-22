@@ -136,7 +136,7 @@ static class Program
                 ocx.Server = "localhost";
                 ocx.UserName = account;
                 ocx.AdvancedSettings2.ClearTextPassword = pw;
-                int dw = 1920, dh = 1080;
+                int dw = 1920, dh = 1080, scale = 0;
                 try
                 {
                     string cfg = Path.Combine(baseDir, "display.cfg");
@@ -144,12 +144,26 @@ static class Program
                     {
                         var parts = File.ReadAllText(cfg).Trim().Split('x');
                         dw = int.Parse(parts[0]); dh = int.Parse(parts[1]);
+                        if (parts.Length > 2) scale = int.Parse(parts[2]);
                     }
                 }
                 catch (Exception ex) { Log("display.cfg: " + ex.Message); }
                 ocx.DesktopWidth = dw;
                 ocx.DesktopHeight = dh;
                 try { ocx.AdvancedSettings2.SmartSizing = true; } catch { }
+                if (scale > 0)
+                {
+                    try
+                    {
+                        object ds = (uint)scale;
+                        var extS = (IMsRdpExtendedSettings)rdp.Ocx;
+                        extS.put_Property("DesktopScaleFactor", ref ds);
+                        object dev = (uint)180;
+                        extS.put_Property("DeviceScaleFactor", ref dev);
+                        Log("scale " + scale + "% applied");
+                    }
+                    catch (Exception ex) { Log("scale: " + ex.Message); }
+                }
                 try { ocx.ColorDepth = 32; } catch { }
                 try { ocx.AdvancedSettings7.EnableCredSspSupport = true; } catch { }
                 object v = true;
