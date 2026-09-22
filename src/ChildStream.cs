@@ -116,6 +116,30 @@ static class Program
         ToolStripMenuItem reconnectItem = new ToolStripMenuItem("Reconnect now");
         menu.Items.Add(reconnectItem);
         menu.Items.Add("Forget saved password", null, (s, e) => { try { File.Delete(credPath); } catch { } tray.ShowBalloonTip(2000, "Child Session", "Password cleared. Restart the app.", ToolTipIcon.Info); });
+        menu.Items.Add("End session (sign out, closes games)", null, (s, e) =>
+        {
+            if (MessageBox.Show("Sign out the child session? All apps running in it will close.", "Child Session", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("qwinsta") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+                var proc = System.Diagnostics.Process.Start(psi);
+                string outp = proc.StandardOutput.ReadToEnd();
+                proc.WaitForExit();
+                foreach (var line in outp.Split('\n'))
+                {
+                    if (line.Contains(Environment.UserName) && !line.Contains("console"))
+                    {
+                        var m = System.Text.RegularExpressions.Regex.Match(line, @"\s(\d+)\s");
+                        if (m.Success)
+                        {
+                            Log("signing out session " + m.Groups[1].Value);
+                            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("logoff", m.Groups[1].Value) { UseShellExecute = false, CreateNoWindow = true });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { Log("signout: " + ex.Message); }
+        });
         menu.Items.Add("Exit", null, (s, e) => { tray.Visible = false; Application.Exit(); });
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += (s, e) => { f.Show(); f.WindowState = FormWindowState.Normal; f.Activate(); };
@@ -203,4 +227,5 @@ static class Program
         return 0;
     }
 }
+
 
