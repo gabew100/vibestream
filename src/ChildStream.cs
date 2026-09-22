@@ -106,6 +106,7 @@ static class Program
             SavePassword(pw);
         }
 
+        bool[] endRequested = { false };
         var f = new Form { Text = "Child Session", Width = 1360, Height = 820 };
         Icon appIcon = SystemIcons.Application;
         try { appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
@@ -119,6 +120,7 @@ static class Program
         menu.Items.Add("End session (sign out, closes games)", null, (s, e) =>
         {
             if (MessageBox.Show("Sign out the child session? All apps running in it will close.", "Child Session", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            endRequested[0] = true;
             try
             {
                 var psi = new System.Diagnostics.ProcessStartInfo("qwinsta") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
@@ -139,6 +141,9 @@ static class Program
                 }
             }
             catch (Exception ex) { Log("signout: " + ex.Message); }
+            var quitTimer = new Timer { Interval = 3000 };
+            quitTimer.Tick += delegate { tray.Visible = false; Application.Exit(); };
+            quitTimer.Start();
         });
         menu.Items.Add("Exit", null, (s, e) => { tray.Visible = false; Application.Exit(); });
         tray.ContextMenuStrip = menu;
@@ -210,7 +215,7 @@ static class Program
             {
                 int state = (int)ocx.Connected;
                 if (state != last) { last = state; Log("state -> " + state); f.Text = state == 1 ? "Child Session - connected" : "Child Session - state " + state; }
-                if (state == 0 && wantReconnect && (DateTime.Now - lastAttempt).TotalSeconds > 5)
+                if (state == 0 && wantReconnect && !endRequested[0] && (DateTime.Now - lastAttempt).TotalSeconds > 5)
                 {
                     lastAttempt = DateTime.Now;
                     Log("auto-reconnect");
@@ -227,5 +232,6 @@ static class Program
         return 0;
     }
 }
+
 
 
