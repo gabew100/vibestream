@@ -1,0 +1,16 @@
+# build artifacts / local runtime state
+*.exe
+*.log
+*.marker
+cred.bin
+monitors.csv
+sunshine-lite.zip
+
+# local Sunshine install (downloaded by setup.ps1)
+Sunshine/
+
+# dev leftovers (root copies only)
+/ChildSessionLauncher*.cs
+/DuoPOCLauncher.cs
+/uac-retry.ps1
+/childsession-autostart.ps1
