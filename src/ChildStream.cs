@@ -136,8 +136,20 @@ static class Program
                 ocx.Server = "localhost";
                 ocx.UserName = account;
                 ocx.AdvancedSettings2.ClearTextPassword = pw;
-                ocx.DesktopWidth = 1920;
-                ocx.DesktopHeight = 1080;
+                int dw = 1920, dh = 1080;
+                try
+                {
+                    string cfg = Path.Combine(baseDir, "display.cfg");
+                    if (File.Exists(cfg))
+                    {
+                        var parts = File.ReadAllText(cfg).Trim().Split('x');
+                        dw = int.Parse(parts[0]); dh = int.Parse(parts[1]);
+                    }
+                }
+                catch (Exception ex) { Log("display.cfg: " + ex.Message); }
+                ocx.DesktopWidth = dw;
+                ocx.DesktopHeight = dh;
+                try { ocx.AdvancedSettings2.SmartSizing = true; } catch { }
                 try { ocx.ColorDepth = 32; } catch { }
                 try { ocx.AdvancedSettings7.EnableCredSspSupport = true; } catch { }
                 object v = true;
@@ -177,3 +189,4 @@ static class Program
         return 0;
     }
 }
+
