@@ -26,8 +26,8 @@ The setup script now:
 2. Enables Windows child sessions, loopback RDP, high-refresh composition, and minimized-session rendering.
 3. Checks the latest stable `Nonary/vibeshine` release every run.
 4. Downloads the official installer and verifies the SHA-256 digest published by GitHub before executing it.
-5. Extracts Vibeshine in MSI administrative mode so the normal machine-wide `SunshineService` is **not** installed.
-6. Updates the portable Vibeshine payload when a newer release exists while preserving the existing `config` directory.
+5. Extracts Vibeshine in MSI administrative mode so the normal machine-wide `SunshineService` is **not** installed; the VHF gamepad payload is explicitly included in the administrative image.
+6. Updates the portable Vibeshine payload when a newer release exists while preserving the existing `config` directory; it also refreshes the same release automatically if the VHF gamepad payload is missing.
 7. Migrates the old repo-local Sunshine config/state on first upgrade.
 8. Preserves existing Vibeshine settings; only missing ChildStream defaults are added on existing installs.
 9. Installs/updates only Vibeshine's machine-wide **VHF virtual gamepad driver** for Moonlight controller support. The Vibeshine service and virtual display driver remain uninstalled.
