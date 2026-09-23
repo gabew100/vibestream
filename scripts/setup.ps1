@@ -63,7 +63,22 @@ function Get-VibeshineGamepadInstaller {
     }
 
     $candidate = Get-ChildItem -LiteralPath $SearchRoot -Filter 'install.ps1' -File -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -match '[\\/]drivers[\\/]vhf-gamepad[\\/]install\.ps1
+        Where-Object {
+            $parent = Split-Path $_.FullName -Parent
+            $parentLeaf = Split-Path $parent -Leaf
+            $grandParent = Split-Path $parent -Parent
+            $grandParentLeaf = if ($grandParent) { Split-Path $grandParent -Leaf } else { '' }
+            $parentLeaf -ieq 'vhf-gamepad' -and $grandParentLeaf -ieq 'drivers'
+        } |
+        Sort-Object { $_.FullName.Length } |
+        Select-Object -First 1
+
+    if ($candidate) {
+        return $candidate.FullName
+    }
+    return $null
+}
+
 function Test-ProcessUnderPath {
     param(
         [string]$ExecutablePath,
