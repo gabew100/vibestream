@@ -3,6 +3,10 @@
   One-shot setup for ChildStream: second-desktop game streaming via Windows child sessions.
 .NOTES
   Run from an elevated PowerShell in the repo root:  .\scripts\setup.ps1
+
+  Vibeshine is downloaded from Nonary/vibeshine and unpacked with MSI
+  administrative-install mode. This keeps the host portable inside the repo
+  instead of registering Vibeshine's normal machine-wide auto-start service.
 #>
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -33,34 +37,89 @@ Write-Host 'RDP composition rate raised'
 New-Item -Path 'HKCU:\Software\Microsoft\Terminal Server Client' -Force | Out-Null
 Set-ItemProperty 'HKCU:\Software\Microsoft\Terminal Server Client' -Name RemoteDesktop_SuppressWhenMinimized -Value 2 -Type DWord
 
-# 5. Download portable Sunshine if missing
-$sunshineExe = "$root\Sunshine\Sunshine\sunshine.exe"
-if (-not (Test-Path $sunshineExe)) {
-    Write-Host 'Downloading Sunshine (portable lite)...'
-    $rel = Invoke-RestMethod 'https://api.github.com/repos/LizardByte/Sunshine/releases/latest'
-    $asset = $rel.assets | Where-Object name -eq 'Sunshine-Windows-AMD64-lite.zip'
-    Invoke-WebRequest $asset.browser_download_url -OutFile "$root\sunshine-lite.zip"
-    Expand-Archive "$root\sunshine-lite.zip" "$root\Sunshine" -Force
-    Remove-Item "$root\sunshine-lite.zip"
+# 5. Download and unpack portable Vibeshine if missing.
+#
+# Vibeshine's normal installer registers an auto-start Windows service. ChildStream
+# must run the streaming host only inside the child session, so use MSI
+# administrative-install mode (/a) to unpack the official payload without
+# installing that service.
+$vibeshineRoot = Join-Path $root 'Vibeshine'
+
+function Get-VibeshineExe {
+    if (-not (Test-Path $vibeshineRoot)) { return $null }
+
+    $candidate = Get-ChildItem -Path $vibeshineRoot -Filter 'sunshine.exe' -File -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object { $_.FullName.Length } |
+        Select-Object -First 1
+
+    if ($candidate) { return $candidate.FullName }
+    return $null
 }
 
-# 6. Sunshine config: distinct name + ports so it can coexist with another host (e.g. Apollo/Vibepollo on 47989)
-$confDir = "$root\Sunshine\Sunshine\config"
+$vibeshineExe = Get-VibeshineExe
+
+if (-not $vibeshineExe) {
+    Write-Host 'Downloading latest stable Vibeshine...'
+
+    $headers = @{ 'User-Agent' = 'ChildStream-Vibeshine-Setup' }
+    $rel = Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/Nonary/vibeshine/releases/latest'
+    $asset = $rel.assets |
+        Where-Object { $_.name -like 'VibeshineSetup-*.exe' } |
+        Select-Object -First 1
+
+    if (-not $asset) {
+        throw 'Latest Vibeshine release does not contain a VibeshineSetup-*.exe asset.'
+    }
+
+    $installer = Join-Path $root 'vibeshine-setup.exe'
+    Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile $installer
+
+    New-Item -ItemType Directory -Path $vibeshineRoot -Force | Out-Null
+
+    # /a performs an administrative install (payload extraction). TARGETDIR is
+    # the extraction root. Driver install properties are disabled as an extra
+    # safeguard; no install custom actions should be needed for ChildStream.
+    $adminArgs = '/a /qn TARGETDIR="{0}" INSTALL_VIRTUAL_DISPLAY_DRIVER=0 INSTALL_VIRTUAL_GAMEPAD_DRIVER=0' -f $vibeshineRoot
+    $proc = Start-Process -FilePath $installer -ArgumentList $adminArgs -Wait -PassThru
+
+    Remove-Item $installer -Force -ErrorAction SilentlyContinue
+
+    if ($proc.ExitCode -notin @(0, 1641, 3010)) {
+        throw "Vibeshine administrative extraction failed with exit code $($proc.ExitCode)."
+    }
+
+    $vibeshineExe = Get-VibeshineExe
+    if (-not $vibeshineExe) {
+        throw "Vibeshine extraction completed, but sunshine.exe was not found under $vibeshineRoot."
+    }
+}
+
+Write-Host "Vibeshine host: $vibeshineExe"
+
+# 6. Vibeshine config: distinct name + ports so it can coexist with another
+# host on the console session. Vibeshine retains Sunshine's executable/config
+# names on Windows, so sunshine.exe and sunshine.conf are expected.
+$confDir = Join-Path (Split-Path $vibeshineExe -Parent) 'config'
 New-Item -ItemType Directory -Path $confDir -Force | Out-Null
 @"
 sunshine_name = $env:COMPUTERNAME-Child
 port = 48989
 capture = wgc
-"@ | Set-Content "$confDir\sunshine.conf"
-Write-Host 'Sunshine configured (base port 48989). Set web UI credentials with: sunshine.exe --creds <user> <pass>'
+"@ | Set-Content (Join-Path $confDir 'sunshine.conf')
+Write-Host 'Vibeshine configured (base port 48989).'
+Write-Host "Set web UI credentials with: `"$vibeshineExe`" --creds <user> <pass>"
 
 # 7. Firewall rule
-if (-not (Get-NetFirewallRule -DisplayName 'ChildStream Sunshine' -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName 'ChildStream Sunshine' -Direction Inbound -Program $sunshineExe -Action Allow -Profile Any | Out-Null
-}
+Remove-NetFirewallRule -DisplayName 'ChildStream Sunshine' -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName 'ChildStream Vibeshine' -ErrorAction SilentlyContinue
+New-NetFirewallRule -DisplayName 'ChildStream Vibeshine' -Direction Inbound -Program $vibeshineExe -Action Allow -Profile Any | Out-Null
 
-# 8. Startup hook (all users) so Sunshine starts inside child sessions automatically
-$hook = 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\childstream-sunshine.cmd'
+# 8. Startup hook (all users). The PowerShell script immediately exits on the
+# physical console, and only starts Vibeshine/cleans startup apps in child sessions.
+$startupDir = 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup'
+$legacyHook = Join-Path $startupDir 'childstream-sunshine.cmd'
+$hook = Join-Path $startupDir 'childstream-vibeshine.cmd'
+Remove-Item $legacyHook -Force -ErrorAction SilentlyContinue
 Set-Content $hook "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\scripts\childsession-autostart.ps1`""
 
 # 9. Desktop shortcut
@@ -72,5 +131,7 @@ $lnk.Description = 'Second desktop for game streaming'
 $lnk.Save()
 
 Write-Host ''
-Write-Host 'Done. Launch "Child Session" from the desktop, enter your Windows password once,'
-Write-Host 'then pair Moonlight/Artemis with <host-ip>:48989.'
+Write-Host 'Done. Launch "Child Session" from the desktop and enter your Windows password once.'
+Write-Host 'Then pair Moonlight/Artemis with <host-ip>:48989.'
+Write-Host 'Unwanted third-party startup apps in the child session are cleaned for the first'
+Write-Host '45 seconds according to scripts\childsession-allowlist.json.'

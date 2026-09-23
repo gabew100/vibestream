@@ -5,8 +5,10 @@
 cred.bin
 monitors.csv
 sunshine-lite.zip
+vibeshine-setup.exe
 
-# local Sunshine install (downloaded by setup.ps1)
+# local streaming-host payloads downloaded/extracted by setup.ps1
+Vibeshine/
 Sunshine/
 
 # dev leftovers (root copies only)

@@ -1,33 +1,17 @@
-# ChildStream
+# ChildStream + Vibeshine
 
 **Stream games from a second Windows desktop while you keep using your PC — free, open, no license unlocks.**
 
-ChildStream is a proof of concept that replicates the core idea of multiseat streaming tools (like [Duo](https://github.com/DuoStream/Duo)) using only documented Windows features:
+This fork uses **[Vibeshine](https://github.com/Nonary/vibeshine)** as the Moonlight-compatible streaming host and adds child-session startup cleanup so normal desktop startup apps do not stay running in the streaming session.
 
-- A **child session** — a second, fully independent Windows logon session created via the Win32 `WTSEnableChildSessions` API and the RDP ActiveX control's `ConnectToChildSession` property
-- A portable **[Sunshine](https://github.com/LizardByte/Sunshine)** instance running *inside* that session on its own ports
-- Any **Moonlight** client (Artemis on Android works great) connecting to it
-
-Result: your phone/tablet/TV streams a game from the second desktop at up to ~120 fps, while the physical desktop stays fully usable at its native refresh rate (verified 143 Hz on the host while streaming 2800×1272 @ 120 fps).
-
-```
-┌────────────────────────── Your PC ──────────────────────────┐
-│  Console session (you)          Child session (streaming)   │
-│  ├─ your apps, 144 Hz           ├─ games                    │
-│  └─ physical monitors           ├─ Sunshine (port 48989)    │
-│                                 └─ RDP display @ ~120 fps   │
-│  ChildStream.exe ── RDP loopback viewer ──> child session   │
-└─────────────────────────────────────────────────────────────┘
-                                  │
-                        Moonlight / Artemis client
-```
+ChildStream uses documented Windows child sessions plus a repo-local Vibeshine payload. Vibeshine's Windows host executable is still named `sunshine.exe`, and its Windows config is still `sunshine.conf`; those upstream filenames are expected.
 
 ## Requirements
 
-- Windows 10/11 **Pro** (tested on Windows 11 Pro 25H2)
+- Windows 10/11 **Pro**
 - A GPU with a hardware encoder (NVENC / AMF / QSV)
-- .NET Framework 4.x (preinstalled on Windows)
-- A password-capable Windows account (child session logon uses `MACHINE\user` + password; if you use a Microsoft account with Windows Hello only, allow password sign-in)
+- .NET Framework 4.x
+- A password-capable Windows account
 
 ## Setup
 
@@ -36,49 +20,82 @@ Result: your phone/tablet/TV streams a game from the second desktop at up to ~12
 .\scripts\setup.ps1
 ```
 
-The script:
-1. Compiles `ChildStream.exe` from source (csc, no build tools needed)
-2. Enables child sessions (`WTSEnableChildSessions`)
-3. Allows RDP connections (child sessions are loopback RDP)
-4. Raises the session compositor rate (`DWMFRAMEINTERVAL = 8` → ~120 fps)
-5. Downloads portable Sunshine and configures it on base port **48989** (coexists with an existing host like Apollo/Vibepollo on 47989)
-6. Adds a firewall rule + startup hook that auto-starts Sunshine **only inside child sessions**
-7. Creates a desktop shortcut
+The setup script:
 
-Then:
-1. Launch **Child Session** from the desktop
-2. Enter your Windows password once (stored DPAPI-encrypted, machine-local)
-3. Set Sunshine web UI credentials: `Sunshine\Sunshine\sunshine.exe --creds <user> <pass>`
-4. Pair Moonlight/Artemis with `<host-ip>:48989` (PIN via `https://<host-ip>:48990`)
-5. Play
+1. Compiles `ChildStream.exe`.
+2. Enables Windows child sessions and loopback RDP.
+3. Raises the RDP compositor rate for high-refresh streaming.
+4. Downloads the latest stable release from `Nonary/vibeshine`.
+5. Uses MSI administrative mode (`/a`) to unpack Vibeshine into the repo instead of registering Vibeshine's normal machine-wide auto-start service.
+6. Configures the child host on base port **48989**.
+7. Adds a `ChildStream Vibeshine` firewall rule and a child-session-only startup hook.
+8. Enables startup cleanup from `scripts\childsession-allowlist.json`.
+9. Creates the **Child Session** desktop shortcut.
+
+After setup, use the credential command printed by the script, launch **Child Session**, and pair Moonlight/Artemis with `<host-ip>:48989`.
+
+## Startup allow list
+
+Because the child session uses the same Windows user profile, Windows can launch your normal per-user startup applications there too. This fork cleans unwanted third-party startup processes from the **child session only** for a short period after logon. It does not touch matching processes on the physical console session.
+
+Edit:
+
+```text
+scripts\childsession-allowlist.json
+```
+
+The default allow list keeps Vibeshine (`sunshine.exe`), Explorer, Steam, Steam WebHelper, GameOverlayUI, and required Windows shell processes. Processes under `%WINDIR%` are protected. Descendants of Vibeshine and Steam are protected so games launched during the cleanup window are not terminated.
+
+To keep another app, add its process name without `.exe` to `allowProcesses`. If it is a launcher whose child processes should also survive cleanup, add it to `protectDescendantsOf` as well.
+
+Example:
+
+```json
+{
+  "allowProcesses": ["sunshine", "steam", "Playnite.FullscreenApp"],
+  "protectDescendantsOf": ["sunshine", "steam", "Playnite.FullscreenApp"]
+}
+```
+
+You can also change `initialDelaySeconds`, `cleanupSeconds`, and `scanIntervalSeconds` in the JSON file. The default cleanup window is 45 seconds.
+
+## Why Vibeshine is unpacked instead of normally installed
+
+Vibeshine's standard Windows installer registers an auto-start streaming service. That is useful for a normal single-session host but conflicts with ChildStream's goal of running the streaming host only inside the child session.
+
+`setup.ps1` therefore invokes the official Vibeshine installer in MSI administrative/extraction mode and launches the extracted `sunshine.exe` from the child-session startup script.
 
 ## Usage notes
 
-- **Keep ChildStream running while streaming** — minimize it to the tray. The child session's display exists only while the viewer is attached; closing the app breaks capture until you reconnect (it auto-reconnects on relaunch).
-- The session itself survives viewer disconnects — games keep running.
-- To fully end the session: sign out from inside it.
-- If your Microsoft account password is rejected, log on as `MACHINE\username` (the launcher does this automatically).
+- Keep ChildStream running while streaming; minimizing it to the tray is fine.
+- The child session itself survives viewer disconnects; sign out inside it to fully end the session.
+- If an app you intentionally need disappears shortly after child-session logon, add it to `scripts\childsession-allowlist.json`.
+- The cleanup is fail-safe: Windows-directory processes and processes whose executable path cannot be inspected are not terminated.
 
-## Limitations (vs. commercial tools)
+## Limitations
 
-- One child session max (Windows limitation), same user as the console session
-- Refresh limited by the RDP compositor (~60–125 fps depending on build; `DWMFRAMEINTERVAL` tweak required)
-- No per-session HDR
-- A viewer connection must stay attached (commercial tools ship a custom indirect display driver to avoid this)
+- One child session maximum (Windows limitation).
+- The child session uses the same Windows account/profile as the console session.
+- Startup cleanup happens after Windows initially creates startup processes; it is not true pre-launch suppression.
+- Vibeshine features that depend on its normally installed Windows service or optional system drivers may not be available in this portable child-session configuration.
+- A ChildStream RDP viewer connection must stay attached for the child display to remain capturable.
 
 ## Uninstall
 
-- Delete the repo folder, the desktop shortcut, and `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\childstream-sunshine.cmd`
-- Remove the firewall rule `ChildStream Sunshine`
-- Optional: remove `DWMFRAMEINTERVAL`, set `fDenyTSConnections = 1`, and disable child sessions
+- Delete the repo folder and the **Child Session** desktop shortcut.
+- Delete `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\childstream-vibeshine.cmd`.
+- Remove the firewall rule `ChildStream Vibeshine`.
+- If upgrading from the original version, you can also remove the legacy `childstream-sunshine.cmd`, `ChildStream Sunshine` firewall rule, and old local `Sunshine\` folder.
+- Optional: restore the RDP/child-session registry settings changed by setup.
 
 ## Credits
 
-- [DuoStream/Duo](https://github.com/DuoStream/Duo) for proving the concept
-- [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine) for the streaming host
-- [Artemis / moonlight-android](https://github.com/ClassicOldSong/moonlight-android) as the client
-- Microsoft's documented [Child Sessions](https://learn.microsoft.com/en-us/windows/win32/termserv/child-sessions) API
+- [mattxslv/childstream](https://github.com/mattxslv/childstream) for the original proof of concept
+- [Nonary/vibeshine](https://github.com/Nonary/vibeshine) for the streaming host
+- [DuoStream/Duo](https://github.com/DuoStream/Duo) for the multiseat concept
+- [Artemis / moonlight-android](https://github.com/ClassicOldSong/moonlight-android) as a client
+- Microsoft's documented Child Sessions API
 
 ## Disclaimer
 
-Proof of concept, provided as-is. Built collaboratively with GitHub Copilot CLI in an afternoon. Use at your own risk.
+Proof of concept, provided as-is. Use at your own risk.

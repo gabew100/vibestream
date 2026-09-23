@@ -1,0 +1,28 @@
+{
+  "_comment": "Only used inside a ChildStream child session. Windows processes are protected separately by childsession-autostart.ps1. Process names omit .exe.",
+  "initialDelaySeconds": 6,
+  "cleanupSeconds": 45,
+  "scanIntervalSeconds": 2,
+  "allowProcesses": [
+    "sunshine",
+    "vibeshine",
+    "explorer",
+    "steam",
+    "steamwebhelper",
+    "GameOverlayUI",
+    "SearchHost",
+    "StartMenuExperienceHost",
+    "ShellExperienceHost",
+    "TextInputHost",
+    "RuntimeBroker",
+    "ApplicationFrameHost"
+  ],
+  "protectDescendantsOf": [
+    "sunshine",
+    "vibeshine",
+    "steam"
+  ],
+  "protectedPathPrefixes": [
+    "%WINDIR%\\"
+  ]
+}
