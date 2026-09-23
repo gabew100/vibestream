@@ -6,9 +6,12 @@ cred.bin
 monitors.csv
 sunshine-lite.zip
 vibeshine-setup.exe
+.childstream-system-state.json
 
 # local streaming-host payloads downloaded/extracted by setup.ps1
 Vibeshine/
+Vibeshine.new/
+Vibeshine.old/
 Sunshine/
 
 # dev leftovers (root copies only)

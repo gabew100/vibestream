@@ -1,5 +1,5 @@
 {
-  "_comment": "Only used inside a ChildStream child session. Windows processes are protected separately by childsession-autostart.ps1. Process names omit .exe.",
+  "_comment": "Only actual Windows startup-entry process names are eligible for cleanup. Process names omit .exe. Use extraStartupProcesses only for startup apps Windows fails to expose through Win32_StartupCommand.",
   "initialDelaySeconds": 6,
   "cleanupSeconds": 45,
   "scanIntervalSeconds": 2,
@@ -22,6 +22,7 @@
     "vibeshine",
     "steam"
   ],
+  "extraStartupProcesses": [],
   "protectedPathPrefixes": [
     "%WINDIR%\\"
   ]

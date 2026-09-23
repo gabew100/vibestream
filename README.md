@@ -2,9 +2,9 @@
 
 **Stream games from a second Windows desktop while you keep using your PC — free, open, no license unlocks.**
 
-This fork uses **[Vibeshine](https://github.com/Nonary/vibeshine)** as the Moonlight-compatible streaming host and adds child-session startup cleanup so normal desktop startup apps do not stay running in the streaming session.
+This fork keeps the original ChildStream naming, uses **[Vibeshine](https://github.com/Nonary/vibeshine)** as the Moonlight-compatible host, and suppresses unwanted startup apps only inside the child session.
 
-ChildStream uses documented Windows child sessions plus a repo-local Vibeshine payload. Vibeshine's Windows host executable is still named `sunshine.exe`, and its Windows config is still `sunshine.conf`; those upstream filenames are expected.
+Vibeshine's Windows host executable is still named `sunshine.exe` and its config remains `sunshine.conf`; those upstream filenames are expected.
 
 ## Requirements
 
@@ -16,27 +16,30 @@ ChildStream uses documented Windows child sessions plus a repo-local Vibeshine p
 ## Setup
 
 ```powershell
-# from an elevated PowerShell in the repo root
+# elevated PowerShell in the repo root
 .\scripts\setup.ps1
 ```
 
-The setup script:
+The setup script now:
 
-1. Compiles `ChildStream.exe`.
-2. Enables Windows child sessions and loopback RDP.
-3. Raises the RDP compositor rate for high-refresh streaming.
-4. Downloads the latest stable release from `Nonary/vibeshine`.
-5. Uses MSI administrative mode (`/a`) to unpack Vibeshine into the repo instead of registering Vibeshine's normal machine-wide auto-start service.
-6. Configures the child host on base port **48989**.
-7. Adds a `ChildStream Vibeshine` firewall rule and a child-session-only startup hook.
-8. Enables startup cleanup from `scripts\childsession-allowlist.json`.
-9. Creates the **Child Session** desktop shortcut.
+1. Compiles `ChildStream.exe` and saves the original Windows/RDP settings for a reversible uninstall.
+2. Enables Windows child sessions, loopback RDP, high-refresh composition, and minimized-session rendering.
+3. Checks the latest stable `Nonary/vibeshine` release every run.
+4. Downloads the official installer and verifies the SHA-256 digest published by GitHub before executing it.
+5. Extracts Vibeshine in MSI administrative mode so the normal machine-wide `SunshineService` is **not** installed.
+6. Updates the portable Vibeshine payload when a newer release exists while preserving the existing `config` directory.
+7. Migrates the old repo-local Sunshine config/state on first upgrade.
+8. Preserves existing Vibeshine settings; only missing ChildStream defaults are added on existing installs.
+9. Installs/updates only Vibeshine's machine-wide **VHF virtual gamepad driver** for Moonlight controller support. The Vibeshine service and virtual display driver remain uninstalled.
+10. Creates the firewall rule, child-session startup hook, and desktop shortcut.
 
 After setup, use the credential command printed by the script, launch **Child Session**, and pair Moonlight/Artemis with `<host-ip>:48989`.
 
-## Startup allow list
+## Safer startup-app suppression
 
-Because the child session uses the same Windows user profile, Windows can launch your normal per-user startup applications there too. This fork cleans unwanted third-party startup processes from the **child session only** for a short period after logon. It does not touch matching processes on the physical console session.
+Windows uses the same user profile for the child session, so per-user startup apps can launch there as well. The cleanup script now queries Windows' real startup entries (`Win32_StartupCommand` plus Startup-folder shortcuts) and only considers those executable names eligible for suppression.
+
+This means an unrelated third-party app you manually launch during the 45-second cleanup window is no longer automatically killed simply because it is not on the allow list.
 
 Edit:
 
@@ -44,54 +47,67 @@ Edit:
 scripts\childsession-allowlist.json
 ```
 
-The default allow list keeps Vibeshine (`sunshine.exe`), Explorer, Steam, Steam WebHelper, GameOverlayUI, and required Windows shell processes. Processes under `%WINDIR%` are protected. Descendants of Vibeshine and Steam are protected so games launched during the cleanup window are not terminated.
+`allowProcesses` keeps specific startup apps. `extraStartupProcesses` is only for startup executables Windows fails to expose automatically. Process names omit `.exe`.
 
-To keep another app, add its process name without `.exe` to `allowProcesses`. If it is a launcher whose child processes should also survive cleanup, add it to `protectDescendantsOf` as well.
+After a startup executable is successfully suppressed once, the script stops policing that executable name for the rest of the login, so manually relaunching it is allowed.
 
-Example:
+## Vibeshine updates and config preservation
 
-```json
-{
-  "allowProcesses": ["sunshine", "steam", "Playnite.FullscreenApp"],
-  "protectDescendantsOf": ["sunshine", "steam", "Playnite.FullscreenApp"]
-}
+Rerunning `setup.ps1` is also the updater. It compares the locally recorded Vibeshine release tag with GitHub's current stable release, verifies the published installer SHA-256, extracts the new payload to a staging directory, preserves your `config` directory, and then swaps the payload.
+
+If the repo-local Vibeshine host is currently running, setup refuses to replace it; sign out of the child session and rerun setup.
+
+## Why the normal Vibeshine service is not installed
+
+Vibeshine's `SunshineService` follows the active **console** session. ChildStream needs Vibeshine to run specifically inside the Windows child session, so this fork intentionally launches the portable host from the child-session startup hook instead.
+
+The VHF virtual gamepad driver is installed separately because controller emulation is machine-wide and useful to the child-session host.
+
+## Migration
+
+`setup.ps1` automatically calls:
+
+```powershell
+.\scripts\migrate.ps1
 ```
 
-You can also change `initialDelaySeconds`, `cleanupSeconds`, and `scanIntervalSeconds` in the JSON file. The default cleanup window is 45 seconds.
+The migration helper removes legacy `ChildStream Sunshine` firewall/startup entries and copies the old `Sunshine\Sunshine\config` state into Vibeshine when no Vibeshine config exists yet.
 
-## Why Vibeshine is unpacked instead of normally installed
+## Uninstall
 
-Vibeshine's standard Windows installer registers an auto-start streaming service. That is useful for a normal single-session host but conflicts with ChildStream's goal of running the streaming host only inside the child session.
+Run from an elevated PowerShell:
 
-`setup.ps1` therefore invokes the official Vibeshine installer in MSI administrative/extraction mode and launches the extracted `sunshine.exe` from the child-session startup script.
+```powershell
+.\scripts\uninstall.ps1
+```
+
+The uninstaller stops only the repo-local Vibeshine process, removes ChildStream's startup hooks/firewall rule/shortcut/runtime payload, and restores the exact Windows registry/child-session settings saved by the first new setup run.
+
+The machine-wide Vibeshine virtual gamepad driver is deliberately kept by default because another Vibeshine installation could share it. To remove it too:
+
+```powershell
+.\scripts\uninstall.ps1 -RemoveGamepadDriver
+```
 
 ## Usage notes
 
 - Keep ChildStream running while streaming; minimizing it to the tray is fine.
 - The child session itself survives viewer disconnects; sign out inside it to fully end the session.
-- If an app you intentionally need disappears shortly after child-session logon, add it to `scripts\childsession-allowlist.json`.
-- The cleanup is fail-safe: Windows-directory processes and processes whose executable path cannot be inspected are not terminated.
+- If a startup app that you actually need is suppressed, add its process name to `allowProcesses`.
+- If a startup app is missed because Windows does not expose its executable name, add it to `extraStartupProcesses`.
 
 ## Limitations
 
 - One child session maximum (Windows limitation).
 - The child session uses the same Windows account/profile as the console session.
-- Startup cleanup happens after Windows initially creates startup processes; it is not true pre-launch suppression.
-- Vibeshine features that depend on its normally installed Windows service or optional system drivers may not be available in this portable child-session configuration.
+- Startup apps are suppressed after Windows initially creates them; this is not true pre-launch suppression.
+- The normal Vibeshine service and Vibeshine virtual display driver are intentionally not installed.
 - A ChildStream RDP viewer connection must stay attached for the child display to remain capturable.
-
-## Uninstall
-
-- Delete the repo folder and the **Child Session** desktop shortcut.
-- Delete `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\childstream-vibeshine.cmd`.
-- Remove the firewall rule `ChildStream Vibeshine`.
-- If upgrading from the original version, you can also remove the legacy `childstream-sunshine.cmd`, `ChildStream Sunshine` firewall rule, and old local `Sunshine\` folder.
-- Optional: restore the RDP/child-session registry settings changed by setup.
 
 ## Credits
 
 - [mattxslv/childstream](https://github.com/mattxslv/childstream) for the original proof of concept
-- [Nonary/vibeshine](https://github.com/Nonary/vibeshine) for the streaming host
+- [Nonary/vibeshine](https://github.com/Nonary/vibeshine) for the streaming host and virtual gamepad driver
 - [DuoStream/Duo](https://github.com/DuoStream/Duo) for the multiseat concept
 - [Artemis / moonlight-android](https://github.com/ClassicOldSong/moonlight-android) as a client
 - Microsoft's documented Child Sessions API

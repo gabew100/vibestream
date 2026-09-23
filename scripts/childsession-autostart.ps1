@@ -3,10 +3,11 @@
 #
 # Responsibilities:
 #   1. Start the portable Vibeshine host in the child session only.
-#   2. During a short startup window, close non-allowed third-party startup
-#      processes only in this child session.
+#   2. Suppress only processes that Windows reports as startup entries, unless
+#      explicitly allowed. Arbitrary third-party apps launched by the user are
+#      no longer blanket-killed during the cleanup window.
 #
-# Vibeshine still names its Windows host binary "sunshine.exe".
+# Vibeshine retains the upstream Windows host filename "sunshine.exe".
 
 Add-Type -Namespace ChildPOC -Name Native -MemberDefinition @'
 [DllImport("kernel32.dll")]
@@ -16,7 +17,6 @@ public static extern uint WTSGetActiveConsoleSessionId();
 $consoleSid = [ChildPOC.Native]::WTSGetActiveConsoleSessionId()
 $mySid = (Get-Process -Id $PID).SessionId
 
-# Physical desktop: do absolutely nothing.
 if ($mySid -eq $consoleSid) {
     exit
 }
@@ -27,38 +27,102 @@ $logPath = Join-Path $root 'autostart.log'
 function Write-ChildLog {
     param([string]$Message)
     try {
-        Add-Content -Path $logPath -Value "$(Get-Date -Format o) $Message"
+        Add-Content -LiteralPath $logPath -Value "$(Get-Date -Format o) $Message"
     } catch {}
 }
 
 function Get-VibeshineExe {
     $vibeshineRoot = Join-Path $root 'Vibeshine'
-    if (-not (Test-Path $vibeshineRoot)) { return $null }
+    if (-not (Test-Path -LiteralPath $vibeshineRoot)) {
+        return $null
+    }
 
-    $candidate = Get-ChildItem -Path $vibeshineRoot -Filter 'sunshine.exe' -File -Recurse -ErrorAction SilentlyContinue |
+    $candidate = Get-ChildItem -LiteralPath $vibeshineRoot -Filter 'sunshine.exe' -File -Recurse -ErrorAction SilentlyContinue |
         Sort-Object { $_.FullName.Length } |
         Select-Object -First 1
 
-    if ($candidate) { return $candidate.FullName }
+    if ($candidate) {
+        return $candidate.FullName
+    }
     return $null
 }
 
-# ---------------------------------------------------------------------------
+function Get-ExecutableNamesFromCommand {
+    param([string]$Command)
+
+    if ([string]::IsNullOrWhiteSpace($Command)) {
+        return
+    }
+
+    $expanded = [Environment]::ExpandEnvironmentVariables($Command)
+    $pattern = '(?i)(?:"([^"]+?\.exe)"|((?:[A-Za-z]:\\|\\\\)[^"]*?\.exe)|(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+\.exe))'
+
+    foreach ($match in [regex]::Matches($expanded, $pattern)) {
+        $candidate = $null
+        for ($groupIndex = 1; $groupIndex -le 3; $groupIndex++) {
+            if ($match.Groups[$groupIndex].Success) {
+                $candidate = $match.Groups[$groupIndex].Value
+                break
+            }
+        }
+
+        if ($candidate) {
+            [IO.Path]::GetFileNameWithoutExtension($candidate).ToLowerInvariant()
+        }
+    }
+}
+
+function Get-WindowsStartupProcessNames {
+    $names = @()
+
+    try {
+        foreach ($entry in @(Get-CimInstance Win32_StartupCommand -ErrorAction Stop)) {
+            $names += @(Get-ExecutableNamesFromCommand -Command ([string]$entry.Command))
+        }
+    } catch {
+        Write-ChildLog "Win32_StartupCommand enumeration failed: $($_.Exception.Message)"
+    }
+
+    # Supplement WMI with direct Startup-folder resolution, especially .lnk files.
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $startupFolders = @(
+            [Environment]::GetFolderPath('Startup'),
+            [Environment]::GetFolderPath('CommonStartup')
+        ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+        foreach ($folder in $startupFolders) {
+            foreach ($item in @(Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue)) {
+                if ($item.Extension -ieq '.lnk') {
+                    $shortcut = $shell.CreateShortcut($item.FullName)
+                    $names += @(Get-ExecutableNamesFromCommand -Command ([string]$shortcut.TargetPath))
+                    $names += @(Get-ExecutableNamesFromCommand -Command ([string]$shortcut.Arguments))
+                } elseif ($item.Extension -ieq '.exe') {
+                    $names += $item.BaseName.ToLowerInvariant()
+                }
+            }
+        }
+    } catch {
+        Write-ChildLog "Startup-folder enumeration failed: $($_.Exception.Message)"
+    }
+
+    @($names | Where-Object { $_ } | Sort-Object -Unique)
+}
+
 # Start Vibeshine in this child session.
-# ---------------------------------------------------------------------------
 $exe = Get-VibeshineExe
 $running = Get-Process sunshine -ErrorAction SilentlyContinue |
     Where-Object SessionId -eq $mySid
 
-if (-not $running -and $exe -and (Test-Path $exe)) {
+if (-not $running -and $exe -and (Test-Path -LiteralPath $exe)) {
     try {
-        # Keep the original ChildStream behavior of elevating the streaming host
-        # so input can reach elevated games (UIPI).
-        Start-Process $exe `
-            -WorkingDirectory (Split-Path $exe) `
-            -WindowStyle Hidden `
-            -Verb RunAs
-
+        $startParams = @{
+            FilePath = $exe
+            WorkingDirectory = (Split-Path $exe)
+            WindowStyle = 'Hidden'
+            Verb = 'RunAs'
+        }
+        Start-Process @startParams
         Write-ChildLog "started Vibeshine ($exe) in session $mySid (console=$consoleSid)"
     } catch {
         Write-ChildLog "failed to start Vibeshine: $($_.Exception.Message)"
@@ -67,18 +131,14 @@ if (-not $running -and $exe -and (Test-Path $exe)) {
     Write-ChildLog 'Vibeshine executable not found; run scripts\setup.ps1 again.'
 }
 
-# ---------------------------------------------------------------------------
-# Load startup allow-list.
-# ---------------------------------------------------------------------------
 $configPath = Join-Path $PSScriptRoot 'childsession-allowlist.json'
-
-if (-not (Test-Path $configPath)) {
+if (-not (Test-Path -LiteralPath $configPath)) {
     Write-ChildLog "startup cleanup skipped: missing $configPath"
     exit
 }
 
 try {
-    $cfg = Get-Content -Path $configPath -Raw | ConvertFrom-Json
+    $cfg = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 } catch {
     Write-ChildLog "startup cleanup skipped: invalid config: $($_.Exception.Message)"
     exit
@@ -120,7 +180,23 @@ $protectedPathPrefixes = @(
         }
 )
 
-# Built-in safety floor. These remain protected even if removed from the JSON.
+$startupProcessNames = @(Get-WindowsStartupProcessNames)
+if ($null -ne $cfg.extraStartupProcesses) {
+    $startupProcessNames += @(
+        $cfg.extraStartupProcesses |
+            ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } |
+            Where-Object { $_ }
+    )
+}
+$startupProcessNames = @($startupProcessNames | Sort-Object -Unique)
+
+if ($startupProcessNames.Count -eq 0) {
+    Write-ChildLog 'startup cleanup skipped: Windows reported no identifiable startup executable names.'
+    exit
+}
+
+Write-ChildLog ("startup executable names: " + ($startupProcessNames -join ', '))
+
 $neverKill = @(
     'powershell',
     'pwsh',
@@ -146,19 +222,23 @@ $neverKill = @(
 function Test-AllowedName {
     param([string]$Name)
 
-    if (-not $Name) { return $false }
+    if (-not $Name) {
+        return $false
+    }
+
     $n = $Name.ToLowerInvariant()
-
-    if ($neverKill -contains $n) { return $true }
-    if ($allowProcesses -contains $n) { return $true }
-
+    if ($neverKill -contains $n) {
+        return $true
+    }
+    if ($allowProcesses -contains $n) {
+        return $true
+    }
     return $false
 }
 
 function Test-ProtectedPath {
     param([string]$Path)
 
-    # Unknown/inaccessible path => fail safe and do not terminate it.
     if ([string]::IsNullOrWhiteSpace($Path)) {
         return $true
     }
@@ -187,12 +267,15 @@ function Test-ProtectedAncestor {
     $seen = @{}
     $current = $ProcessId
 
-    # Walk at most 32 parents to avoid malformed/cyclic process snapshots.
     for ($depth = 0; $depth -lt 32; $depth++) {
-        if ($seen.ContainsKey($current)) { break }
+        if ($seen.ContainsKey($current)) {
+            break
+        }
         $seen[$current] = $true
 
-        if (-not $ProcessById.ContainsKey($current)) { break }
+        if (-not $ProcessById.ContainsKey($current)) {
+            break
+        }
 
         $p = $ProcessById[$current]
         $parentId = [int]$p.ParentProcessId
@@ -203,7 +286,6 @@ function Test-ProtectedAncestor {
 
         $parent = $ProcessById[$parentId]
         $parentName = [IO.Path]::GetFileNameWithoutExtension([string]$parent.Name).ToLowerInvariant()
-
         if ($protectDescendantsOf -contains $parentName) {
             return $true
         }
@@ -219,11 +301,11 @@ if ($initialDelay -gt 0) {
 }
 
 $cleanupEnd = (Get-Date).AddSeconds($cleanupSeconds)
-Write-ChildLog "startup cleanup active for $cleanupSeconds seconds in child session $mySid"
+$handledStartupNames = @{}
+Write-ChildLog "startup-entry cleanup active for $cleanupSeconds seconds in child session $mySid"
 
 while ((Get-Date) -lt $cleanupEnd) {
     try {
-        # CIM gives SessionId, executable path, and parent PID in one snapshot.
         $sessionProcesses = @(
             Get-CimInstance Win32_Process -Filter "SessionId = $mySid" -ErrorAction Stop
         )
@@ -238,27 +320,50 @@ while ((Get-Date) -lt $cleanupEnd) {
         $byId[[int]$p.ProcessId] = $p
     }
 
+    $handledThisScan = @{}
+
     foreach ($p in $sessionProcesses) {
         $pidToCheck = [int]$p.ProcessId
-
-        # Never target this cleanup script itself.
-        if ($pidToCheck -eq $PID) { continue }
+        if ($pidToCheck -eq $PID) {
+            continue
+        }
 
         $name = [IO.Path]::GetFileNameWithoutExtension([string]$p.Name)
+        $nameLower = $name.ToLowerInvariant()
 
-        if (Test-AllowedName $name) { continue }
-        if (Test-ProtectedPath ([string]$p.ExecutablePath)) { continue }
-        if (Test-ProtectedAncestor -ProcessId $pidToCheck -ProcessById $byId) { continue }
+        # The key safety change: only a process whose executable name came from
+        # an actual Windows startup entry (or extraStartupProcesses) is eligible.
+        if ($startupProcessNames -notcontains $nameLower) {
+            continue
+        }
+        if ($handledStartupNames.ContainsKey($nameLower)) {
+            continue
+        }
+        if (Test-AllowedName $name) {
+            continue
+        }
+        if (Test-ProtectedPath ([string]$p.ExecutablePath)) {
+            continue
+        }
+        if (Test-ProtectedAncestor -ProcessId $pidToCheck -ProcessById $byId) {
+            continue
+        }
 
         try {
             Stop-Process -Id $pidToCheck -Force -ErrorAction Stop
+            $handledThisScan[$nameLower] = $true
             Write-ChildLog "closed startup process '$name' pid=$pidToCheck session=$mySid"
-        } catch {
-            # It may already have exited, or the process may deny access.
-        }
+        } catch {}
+    }
+
+    # After the first successful cleanup pass for a startup executable name, do
+    # not police that name again. If the user intentionally relaunches it a few
+    # seconds later, the manual instance is left alone.
+    foreach ($name in $handledThisScan.Keys) {
+        $handledStartupNames[$name] = $true
     }
 
     Start-Sleep -Seconds $scanInterval
 }
 
-Write-ChildLog "startup cleanup finished for child session $mySid"
+Write-ChildLog "startup-entry cleanup finished for child session $mySid"

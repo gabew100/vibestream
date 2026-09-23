@@ -77,6 +77,15 @@ static class Program
             Log("WTSEnableChildSessions(true) => " + ok + " (gle=" + err + "), enabled now = " + en1);
             return en1 ? 0 : 1;
         }
+        if (args.Length > 0 && args[0] == "-disable")
+        {
+            bool ok = WTSEnableChildSessions(false);
+            int err = Marshal.GetLastWin32Error();
+            bool en0;
+            WTSIsChildSessionsEnabled(out en0);
+            Log("WTSEnableChildSessions(false) => " + ok + " (gle=" + err + "), enabled now = " + en0);
+            return !en0 ? 0 : 1;
+        }
         if (args.Length > 0 && args[0] == "-check")
         {
             bool en2;
