@@ -137,6 +137,7 @@ if (Test-Path -LiteralPath $statePath) {
 
 # Remove generated runtime state, but keep the repository/source files.
 Remove-Item -LiteralPath $vibeshineRoot -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $root 'Sunshine') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $root 'Vibeshine.old') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $root 'Vibeshine.new') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $root 'vibeshine-setup.exe') -Force -ErrorAction SilentlyContinue

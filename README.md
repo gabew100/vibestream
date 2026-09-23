@@ -81,7 +81,7 @@ Run from an elevated PowerShell:
 .\scripts\uninstall.ps1
 ```
 
-The uninstaller stops only the repo-local Vibeshine process, removes ChildStream's startup hooks/firewall rule/shortcut/runtime payload, and restores the exact Windows registry/child-session settings saved by the first new setup run.
+The uninstaller stops only the repo-local Vibeshine process, removes ChildStream's startup hooks/firewall rule/shortcut/runtime payload (including the obsolete repo-local Sunshine payload), and restores the exact Windows registry/child-session settings saved by the first new setup run.
 
 The machine-wide Vibeshine virtual gamepad driver is deliberately kept by default because another Vibeshine installation could share it. To remove it too:
 

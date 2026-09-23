@@ -245,34 +245,38 @@ if ($needsUpdate) {
             throw "Vibeshine extraction completed, but sunshine.exe was not found under $stageRoot."
         }
 
-        if (Test-Path -LiteralPath $vibeshineRoot) {
+        $hadOldPayload = Test-Path -LiteralPath $vibeshineRoot
+        if ($hadOldPayload) {
             Move-Item -LiteralPath $vibeshineRoot -Destination $oldRoot
         }
 
         try {
             Move-Item -LiteralPath $stageRoot -Destination $vibeshineRoot
+
+            $vibeshineExe = Get-VibeshineExe -SearchRoot $vibeshineRoot
+            if (-not $vibeshineExe) {
+                throw 'Updated Vibeshine payload is missing sunshine.exe.'
+            }
+
+            if ($configBackup) {
+                $newConfigDir = Join-Path (Split-Path $vibeshineExe -Parent) 'config'
+                New-Item -ItemType Directory -Path $newConfigDir -Force | Out-Null
+                Get-ChildItem -LiteralPath $configBackup -Force |
+                    Copy-Item -Destination $newConfigDir -Recurse -Force
+            }
+
+            Set-Content -LiteralPath $versionMarker -Value $latestTag
+            Remove-Item -LiteralPath $oldRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "Vibeshine $latestTag ready"
         } catch {
-            if (Test-Path -LiteralPath $oldRoot) {
+            # Roll back the entire portable payload if anything after the swap
+            # fails (including executable validation or config restoration).
+            Remove-Item -LiteralPath $vibeshineRoot -Recurse -Force -ErrorAction SilentlyContinue
+            if ($hadOldPayload -and (Test-Path -LiteralPath $oldRoot)) {
                 Move-Item -LiteralPath $oldRoot -Destination $vibeshineRoot
             }
             throw
         }
-
-        $vibeshineExe = Get-VibeshineExe -SearchRoot $vibeshineRoot
-        if (-not $vibeshineExe) {
-            throw 'Updated Vibeshine payload is missing sunshine.exe.'
-        }
-
-        if ($configBackup) {
-            $newConfigDir = Join-Path (Split-Path $vibeshineExe -Parent) 'config'
-            New-Item -ItemType Directory -Path $newConfigDir -Force | Out-Null
-            Get-ChildItem -LiteralPath $configBackup -Force |
-                Copy-Item -Destination $newConfigDir -Recurse -Force
-        }
-
-        Set-Content -LiteralPath $versionMarker -Value $latestTag
-        Remove-Item -LiteralPath $oldRoot -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "Vibeshine $latestTag ready"
     } finally {
         Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
