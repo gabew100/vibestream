@@ -180,12 +180,12 @@ function Test-ProtectedPath {
 
 function Test-ProtectedAncestor {
     param(
-        [int]$Pid,
+        [int]$ProcessId,
         [hashtable]$ProcessById
     )
 
     $seen = @{}
-    $current = $Pid
+    $current = $ProcessId
 
     # Walk at most 32 parents to avoid malformed/cyclic process snapshots.
     for ($depth = 0; $depth -lt 32; $depth++) {
@@ -248,7 +248,7 @@ while ((Get-Date) -lt $cleanupEnd) {
 
         if (Test-AllowedName $name) { continue }
         if (Test-ProtectedPath ([string]$p.ExecutablePath)) { continue }
-        if (Test-ProtectedAncestor -Pid $pidToCheck -ProcessById $byId) { continue }
+        if (Test-ProtectedAncestor -ProcessId $pidToCheck -ProcessById $byId) { continue }
 
         try {
             Stop-Process -Id $pidToCheck -Force -ErrorAction Stop
